@@ -1,0 +1,105 @@
+- name: Baseline hardening and demo app deployment
+  hosts: all
+  become: true
+  vars:
+    app_dir: /opt/demoapp
+  tasks:
+    - name: Install packages
+      ansible.builtin.apt:
+        name: [nginx, ufw, fail2ban, python3-venv]
+        state: present
+        update_cache: true
+
+    - name: Allow SSH port before enabling firewall
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+
+    - name: Allow web ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["80", "443"]
+
+    - name: Enable firewall
+      community.general.ufw:
+        state: enabled
+
+    - name: Harden SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/99-hardening.conf
+        content: |
+          PasswordAuthentication no
+          PermitRootLogin no
+          MaxAuthTries 3
+      notify: Restart ssh
+
+    - name: App directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Copy app
+      ansible.builtin.copy:
+        src: files/app.py
+        dest: "{{ app_dir }}/app.py"
+        owner: "{{ app_user }}"
+      notify: Restart demoapp
+
+    - name: Python venv with flask and gunicorn
+      ansible.builtin.pip:
+        name: [flask, gunicorn]
+        virtualenv: "{{ app_dir }}/venv"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+
+    - name: systemd unit
+      ansible.builtin.template:
+        src: templates/demoapp.service.j2
+        dest: /etc/systemd/system/demoapp.service
+      notify: Restart demoapp
+
+    - name: Nginx site
+      ansible.builtin.template:
+        src: templates/demoapp.nginx.j2
+        dest: /etc/nginx/sites-available/demoapp
+      notify: Reload nginx
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/demoapp
+        dest: /etc/nginx/sites-enabled/demoapp
+        state: link
+      notify: Reload nginx
+
+    - name: Remove default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Start services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+        daemon_reload: true
+      loop: [demoapp, nginx, fail2ban]
+
+  handlers:
+    - name: Restart ssh
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted
+    - name: Restart demoapp
+      ansible.builtin.systemd:
+        name: demoapp
+        state: restarted
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
