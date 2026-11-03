@@ -1,3 +1,4 @@
 *.retry
 *.pem
 *.key
+actions-runner/
