@@ -14,3 +14,13 @@ jobs:
         run: ansible-playbook -i inventory.ini site.yml --limit aws
       - name: Health check
         run: curl -fsS http://13.233.117.123/health
+
+  deploy-onprem:
+    runs-on: self-hosted
+    needs: deploy-aws
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to on-prem
+        run: ansible-playbook -i inventory.ini site.yml --limit onprem
+      - name: Health check
+        run: curl -fsS --resolve anjshahb.duckdns.org:443:127.0.0.1 https://anjshahb.duckdns.org/health
